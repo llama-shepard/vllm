@@ -29,6 +29,7 @@ from vllm.lora.layers import (BaseLayerWithLoRA, ColumnParallelLinearWithLoRA,
 # yapf: enable
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
+from vllm.lora.s3 import S3_PREFIX, download_s3_model
 
 logger = init_logger(__name__)
 
@@ -116,21 +117,29 @@ def parse_fine_tuned_lora_name(name: str) -> Tuple[str, bool]:
 def get_adapter_absolute_path(lora_path: str) -> str:
     """
     Resolves the given lora_path to an absolute local path.
-
-    If the lora_path is identified as a Hugging Face model identifier,
-    it will download the model and return the local snapshot path.
-    Otherwise, it treats the lora_path as a local file path and
-    converts it to an absolute path.
+    Supports local paths, Hugging Face model identifiers, and S3 paths.
+    For S3 paths, it checks if the adapter is already downloaded to 's3_adapters'.
 
     Parameters:
     lora_path (str): The path to the lora model, which can be an absolute path,
-                     a relative path, or a Hugging Face model identifier.
+                     a relative path, a Hugging Face model identifier, or an S3 path.
 
     Returns:
     str: The resolved absolute local path to the lora model.
     """
+    # Check if the path is an S3 path
+    if lora_path.startswith(S3_PREFIX):
+        return resolve_s3_path(lora_path)
 
-    # Check if the path is an absolute path. Return it no matter exists or not.
+    # Handle local paths and Hugging Face identifiers
+    return resolve_local_or_hf_path(lora_path)
+
+def resolve_s3_path(lora_path: str) -> str:
+    s3_model_path = download_s3_model(lora_path)
+    return s3_model_path
+
+def resolve_local_or_hf_path(lora_path: str) -> str:
+    # Check if the path is an absolute path
     if os.path.isabs(lora_path):
         return lora_path
 
@@ -144,13 +153,9 @@ def get_adapter_absolute_path(lora_path: str) -> str:
 
     # If the path does not exist locally, assume it's a Hugging Face repo.
     try:
-        local_snapshot_path = huggingface_hub.snapshot_download(
-            repo_id=lora_path)
-    except (HfHubHTTPError, RepositoryNotFoundError, EntryNotFoundError,
-            HFValidationError):
-        # Handle errors that may occur during the download
-        # Return original path instead instead of throwing error here
+        local_snapshot_path = huggingface_hub.snapshot_download(repo_id=lora_path)
+        logger.info(f"Downloaded adapter from Hugging Face: {local_snapshot_path}")
+        return local_snapshot_path
+    except (HfHubHTTPError, RepositoryNotFoundError, EntryNotFoundError, HFValidationError):
         logger.exception("Error downloading the HuggingFace model")
-        return lora_path
-
-    return local_snapshot_path
+        return None

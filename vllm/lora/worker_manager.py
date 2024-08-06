@@ -91,6 +91,10 @@ class WorkerLoRAManager(AbstractWorkerManager):
                 else:
                     expected_lora_modules.append(module)
             lora_path = get_adapter_absolute_path(lora_request.lora_path)
+
+            if lora_path is None:
+                raise Exception("Error when getting lora adapter")
+
             lora = self._lora_model_cls.from_local_checkpoint(
                 lora_path,
                 expected_lora_modules,
